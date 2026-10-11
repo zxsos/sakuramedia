@@ -821,12 +821,124 @@ impl JavdbProvider {
                 "JavDB 详情返回失败：{detail}"
             )));
         }
-        payload
+        let movie = payload
             .get("data")
             .and_then(|data| data.get("movie"))
             .filter(|movie| !movie.is_null())
             .cloned()
-            .ok_or(MetadataSourceError::NotFound)
+            .ok_or(MetadataSourceError::NotFound)?;
+        Ok(Self::normalize_movie_detail(&movie))
+    }
+
+    /// 归一化 JavDB 原始详情（上游 `_build_movie_detail`，`:862-`）。
+    ///
+    /// JavDB 原始字段名与业务字段名不一致（`id`→`javdb_id`、`number`→`movie_number`、
+    /// `cover_url`→`cover_image`、`comments_count`→`comment_count`、
+    /// `reviews_count`→`score_number`、`duration`→`duration_minutes`）。
+    /// 下游（搜索候选、刷新入库）按归一化字段读取，不做这层转换会丢字段。
+    fn normalize_movie_detail(movie: &Value) -> Value {
+        let str_of = |key: &str| -> Option<String> {
+            movie.get(key).and_then(Value::as_str).map(str::to_owned)
+        };
+        let int_of = |key: &str| -> i64 {
+            movie
+                .get(key)
+                .and_then(Value::as_i64)
+                .or_else(|| movie.get(key).and_then(Value::as_f64).map(|f| f as i64))
+                .or_else(|| {
+                    movie
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .and_then(|s| s.trim().parse::<i64>().ok())
+                })
+                .unwrap_or(0)
+        };
+        let float_of = |key: &str| -> f64 {
+            movie
+                .get(key)
+                .and_then(Value::as_f64)
+                .or_else(|| movie.get(key).and_then(Value::as_i64).map(|i| i as f64))
+                .or_else(|| {
+                    movie
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .and_then(|s| s.trim().parse::<f64>().ok())
+                })
+                .unwrap_or(0.0)
+        };
+        let mut detail = serde_json::Map::new();
+        // 身份字段
+        if let Some(id) = str_of("id") {
+            detail.insert("javdb_id".to_owned(), Value::String(id));
+        }
+        if let Some(number) = str_of("number") {
+            detail.insert("movie_number".to_owned(), Value::String(number));
+        }
+        // 基础元数据
+        detail.insert(
+            "title".to_owned(),
+            Value::String(str_of("title").unwrap_or_default()),
+        );
+        detail.insert(
+            "summary".to_owned(),
+            Value::String(str_of("summary").unwrap_or_default()),
+        );
+        // 封面：保留原始 `cover_url`，同时提供归一化的 `cover_image`
+        if let Some(cover_url) = str_of("cover_url") {
+            detail.insert("cover_url".to_owned(), Value::String(cover_url.clone()));
+            detail.insert("cover_image".to_owned(), Value::String(cover_url));
+        }
+        if let Some(release_date) = str_of("release_date") {
+            detail.insert("release_date".to_owned(), Value::String(release_date));
+        }
+        detail.insert(
+            "duration_minutes".to_owned(),
+            Value::Number(int_of("duration").into()),
+        );
+        detail.insert(
+            "score".to_owned(),
+            Value::Number(
+                serde_json::Number::from_f64(float_of("score")).unwrap_or(0.into()),
+            ),
+        );
+        // 计数类
+        detail.insert(
+            "watched_count".to_owned(),
+            Value::Number(int_of("watched_count").into()),
+        );
+        detail.insert(
+            "want_watch_count".to_owned(),
+            Value::Number(int_of("want_watch_count").into()),
+        );
+        detail.insert(
+            "comment_count".to_owned(),
+            Value::Number(int_of("comments_count").into()),
+        );
+        detail.insert(
+            "score_number".to_owned(),
+            Value::Number(int_of("reviews_count").into()),
+        );
+        // 制作信息
+        if let Some(series_name) = str_of("series_name") {
+            detail.insert("series_name".to_owned(), Value::String(series_name));
+        }
+        if let Some(maker_name) = str_of("maker_name") {
+            detail.insert("maker_name".to_owned(), Value::String(maker_name));
+        }
+        if let Some(director_name) = str_of("director_name") {
+            detail.insert("director_name".to_owned(), Value::String(director_name));
+        }
+        // 列表类：演员、标签、预览图（保持原始结构，下游按需解析）
+        if let Some(actors) = movie.get("actors") {
+            detail.insert("actors".to_owned(), actors.clone());
+        }
+        if let Some(tags) = movie.get("tags") {
+            detail.insert("tags".to_owned(), tags.clone());
+        }
+        if let Some(preview_images) = movie.get("preview_images") {
+            detail.insert("preview_images".to_owned(), preview_images.clone());
+        }
+        Value::Object(detail)
     }
 
     /// 播放榜番号（上游 `get_playback_rank_numbers`，`:611-659`）。

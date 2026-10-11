@@ -187,7 +187,7 @@ impl MovieMetadataSearchService {
                 .unwrap_or_default()
                 .to_owned();
             let cover_url = match detail
-                .get("cover_image")
+                .get("cover_url")
                 .and_then(serde_json::Value::as_str)
             {
                 Some(url) => {

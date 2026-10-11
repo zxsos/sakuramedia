@@ -400,7 +400,7 @@ impl MovieMetadataRefreshService {
                 "javdb_id": detail.get("javdb_id").cloned().unwrap_or(Value::Null),
                 "movie_number": detail.get("movie_number").cloned().unwrap_or(Value::Null),
                 "title": detail.get("title").cloned().unwrap_or(Value::Null),
-                "cover_image": detail.get("cover_image").cloned().unwrap_or(Value::Null),
+                "cover_image": detail.get("cover_url").cloned().unwrap_or(Value::Null),
             }),
             (None, Some(plugin)) => {
                 let num = if plugin.movie_number.trim().is_empty() {

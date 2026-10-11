@@ -63,7 +63,8 @@
 use std::sync::Arc;
 
 use sm_db::repo::{
-    ActorOwnershipGateway, ActorRepository, FieldPatch, MovieOwnershipGateway, MovieRepository,
+    ActorOwnershipGateway, ActorRepository, FieldPatch, ImageRepository, MovieOwnershipGateway,
+    MovieRepository,
 };
 use sm_db::Db;
 
@@ -593,7 +594,7 @@ impl CatalogImportService {
         }
         let movie = repo
             .insert(&sm_db::repo::NewMovie {
-                movie_number: number,
+                movie_number: number.clone(),
                 title: text_of(detail, "title").unwrap_or_default(),
                 // 插件来源**没有** JavDB 身份（`import_plugin_movie` 走这一支）。
                 javdb_id: source
@@ -606,17 +607,72 @@ impl CatalogImportService {
                 duration_minutes: int_of(detail, "duration_minutes").unwrap_or(0),
                 score: float_of(detail, "score").unwrap_or(0.0),
                 score_number: int_of(detail, "score_number").unwrap_or(0),
-                // 系列与封面都要 join / 落盘，本轮都没接（见模块文档）。
+                // 系列要 join，本轮没接（见模块文档）。
                 series_id: None,
                 cover_image_id: None,
                 ..Default::default()
             })
             .await?;
+        // 下载封面并关联（最小实现：下载原图，存本地，建 image 记录，回写 movie.cover_image_id）
+        if let Some(cover_url) = text_of(detail, "cover_url") {
+            if !cover_url.trim().is_empty() {
+                if let Some(image_id) = self.download_and_save_cover(&number, &cover_url).await {
+                    // 回写 cover_image_id
+                    let _ = repo
+                        .update_cover_image(movie.id, Some(image_id))
+                        .await;
+                }
+            }
+        }
         Ok(CatalogImportResult {
             movie_id: movie.id,
             created: true,
             updated_fields: Vec::new(),
         })
+    }
+
+    /// 下载封面到本地并建 image 记录，返回 image id。失败返回 None（不阻断主流程）。
+    async fn download_and_save_cover(
+        &self,
+        movie_number: &str,
+        cover_url: &str,
+    ) -> Option<i32> {
+        use sm_db::repo::NewImage;
+        // 1. 下载
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .ok()?;
+        let resp = client.get(cover_url).send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let bytes = resp.bytes().await.ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        // 2. 落盘：/data/images/movies/{number}/cover.jpg
+        // 番号可能含特殊字符，做简单清洗
+        let safe_number: String = movie_number
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        let dir = std::path::PathBuf::from("/data/images/movies").join(&safe_number);
+        if tokio::fs::create_dir_all(&dir).await.is_err() {
+            return None;
+        }
+        let file_path = dir.join("cover.jpg");
+        if tokio::fs::write(&file_path, &bytes).await.is_err() {
+            return None;
+        }
+        // 3. 建 image 记录（origin 用相对路径）
+        let origin = format!("movies/{}/cover.jpg", safe_number);
+        let image_repo = ImageRepository::new(self.db.clone());
+        let (image_id, _) = image_repo
+            .upsert(&NewImage { origin })
+            .await
+            .ok()?;
+        Some(image_id)
     }
 
     /// 取番号（去空白）。**没有番号是调用方的 bug**，不是「跳过」。

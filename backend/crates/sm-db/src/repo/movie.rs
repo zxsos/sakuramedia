@@ -630,6 +630,20 @@ impl MovieRepository {
         Ok(result.rows_affected())
     }
 
+    /// 更新影片的封面图 ID。
+    pub async fn update_cover_image(
+        &self,
+        movie_id: i32,
+        image_id: Option<i32>,
+    ) -> Result<u64, DbError> {
+        let result = sqlx::query("UPDATE movie SET cover_image_id = $2 WHERE id = $1")
+            .bind(movie_id)
+            .bind(image_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     /// **有图片资产**（封面 / 薄封面 / 剧照）的影片番号，去重后按番号升序。
     ///
     /// 对应上游 `MovieAssetPackBackfillService._candidate_movie_numbers`

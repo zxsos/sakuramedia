@@ -651,13 +651,16 @@ impl CatalogImportService {
         if bytes.is_empty() {
             return None;
         }
-        // 2. 落盘：/data/images/movies/{number}/cover.jpg
-        // 番号可能含特殊字符，做简单清洗
+        // 2. 落盘：{image_root}/movies/{number}/cover.jpg
+        // 与文件服务接口的读取根（media_paths::DEFAULT_IMAGE_ROOT）保持一致，
+        // 否则下载了也读不到。番号可能含特殊字符，做简单清洗
         let safe_number: String = movie_number
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
             .collect();
-        let dir = std::path::PathBuf::from("/data/images/movies").join(&safe_number);
+        let dir = std::path::PathBuf::from(super::media_paths::DEFAULT_IMAGE_ROOT)
+            .join("movies")
+            .join(&safe_number);
         if tokio::fs::create_dir_all(&dir).await.is_err() {
             return None;
         }

@@ -43,7 +43,6 @@ use sm_service::catalog::image_store;
 use sm_service::catalog::media_paths;
 use sm_service::catalog::movie_subtitle::MovieSubtitleService;
 
-use crate::auth::CurrentUser;
 use crate::error::ErrorResponse;
 use crate::extract::Query as EnvelopeQuery;
 use crate::routes::method_not_allowed;
@@ -114,7 +113,6 @@ fn require_signed_params(query: &SignedUrlQuery) -> Result<(i64, &str), ErrorRes
 ///    [`image_store::read_image_bytes`] 里，不在路由层重写一遍）；
 /// 4. 两处都没有 → **404 `file_not_found`**（**不是** 500）。
 async fn get_image_file(
-    _user: CurrentUser,
     State(state): State<AppState>,
     Path(file_path): Path<String>,
     EnvelopeQuery(query): EnvelopeQuery<SignedUrlQuery>,
@@ -157,7 +155,6 @@ async fn get_image_file(
 ///
 /// 字幕按**整数主键**取，**不用通配**（见模块文档的路径穿越说明）。
 async fn get_subtitle_file(
-    _user: CurrentUser,
     State(state): State<AppState>,
     Path(subtitle_id): Path<i64>,
     EnvelopeQuery(query): EnvelopeQuery<SignedUrlQuery>,
